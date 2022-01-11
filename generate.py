@@ -98,6 +98,8 @@ def generate_crosssec(settings):
                     if modeinv[mode] > 1
                     else j / rows * Config.period
                 )
+                if settings["parallel"]:
+                    trace["offset"] = 0
 
     amp = Config.spacing * mode / 2
     for j in range(rows + 1):
@@ -119,6 +121,8 @@ def generate_crosssec(settings):
                 if modeinv[mode] > 1
                 else i / cols * Config.period
             )
+            if settings["parallel"]:
+                trace["offset"] = 0
 
     for trace in traces:
         if settings["angled"]:
