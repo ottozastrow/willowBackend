@@ -1,11 +1,11 @@
 import json
 
-import flask
-from flask import jsonify, request
+from quart import Quart, jsonify, request
+from wickergen.braidGenerator.visualize import write_obj_file
 
-from generate import generate_crosssec, write_obj_file
+from generate import generate_crosssec
 
-app = flask.Flask(__name__)
+app = Quart(__name__)
 cache = None
 
 
@@ -16,7 +16,33 @@ def generate_pattern():
 
     traces = generate_crosssec(settings)
 
-    response = flask.jsonify({"lines3d": traces})
+    response = jsonify({"lines3d": traces})
+    cache = traces
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    return response
+
+
+@app.route("/animate3d")
+def generate_pattern3d():
+    global cache
+    settings: dict = json.loads(request.args.get("settings"))  # type: ignore
+
+    traces = generate_crosssec(settings, animate3d=True)
+
+    response = jsonify({"lines3d": traces})
+    cache = traces
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    return response
+
+
+@app.route("/animate2d")
+def generate_pattern2d():
+    global cache
+    settings: dict = json.loads(request.args.get("settings"))  # type: ignore
+
+    traces = generate_crosssec(settings, animate2d=True)
+
+    response = jsonify({"lines3d": traces})
     cache = traces
     response.headers.add("Access-Control-Allow-Origin", "*")
     return response

@@ -1,7 +1,12 @@
 import math
+from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import plotly.express as px
+from wickergen.braidGenerator import util_classes, utils, visualize
+from wickergen.braidGenerator.util_classes import Arena, Strand
 
 
 class Config:
@@ -57,12 +62,119 @@ def generate_trace_points(trace):
     trace["z"] = z.tolist()
 
 
-def generate_crosssec(settings):
+def generate_trace_from_settings(settings, is_x: bool):
     rows = settings["myRows"]
     cols = settings["myCols"]
     subd = settings["mode"]  # subdivides curvature
     mode = 2 ** subd
     modeinv = {1: 4, 2: 2, 4: 1, 8: 0.5}
+
+    traces = []
+    amp = Config.spacing * mode / 2
+
+    if is_x:
+        curves_per_plane = rows
+        curves_per_row = cols
+        amp_per_plane = amp
+        amp_per_row = 0
+        per_plane = "xstart"
+        per_row = "ystart"
+
+    else:
+        curves_per_plane = cols
+        curves_per_row = rows
+        amp_per_plane = 0
+        amp_per_row = amp
+        per_plane = "ystart"
+        per_row = "xstart"
+
+    for i in range(curves_per_row + 1):
+        for j in range(curves_per_plane):
+            trace = {"x": [], "y": [], "z": []}
+            traces.append(trace)
+
+            trace[per_plane] = (
+                j // mode * Config.spacing * mode + Config.spacing / 2 * mode
+            )
+
+            trace[per_row] = i * Config.spacing
+            trace["ampx"] = amp_per_plane
+            trace["ampy"] = amp_per_row
+            trace["period"] = Config.period / modeinv[mode]
+            trace["offset"] = (
+                trace["period"] / 2 * (j % 2)
+                if modeinv[mode] > 1
+                else j / curves_per_row * Config.period
+            )
+            if settings["parallel"]:
+                trace["offset"] = 0
+    return traces
+
+
+def compute_pipegear_position(strand) -> tuple[float, float, float]:
+    # x = (max(strand.x) - min(strand.x)) / 2
+    # y = (max(strand.y) - min(strand.y)) / 2
+    x = strand.x[-1]
+    y = strand.y[-1]
+    z = min(strand.z) - 0.5
+    return x, y, z
+
+
+def compute_split_pipegear_position(strand) -> Strand:
+    # x = (max(strand.x) - min(strand.x)) / 2
+    # y = (max(strand.y) - min(strand.y)) / 2
+    x = strand.x[-1]
+    y = strand.y[-1]
+    z = min(strand.z) - 0.5
+    pipestrand = Strand(0)
+    pipestrand.x = [strand.x, x]
+    pipestrand.y = [strand.y, y]
+    pipestrand.z = [strand.z - 0.07, z]
+    return pipestrand
+
+
+def calc_3d_robot_plane(
+    strands: list[Strand],
+    relative_time: float = 0.0,
+    robot_pos_fn=compute_split_pipegear_position,
+    steps=Arena.animation_steps,
+    slice_height=Arena.interpolate_steps_per_meter,
+) -> list[list[Strand]]:
+    """
+    relative_time: float between 0 and 1.
+    starts 3d animation from that relative vertical position
+    """
+    minz, maxz = utils.min_max_z_from_strands(strands)
+    # note: z is vertical component of 3d coordinate.
+    # time is -z because we weave top-down
+    cut_threshold = maxz - (maxz - minz) * relative_time
+
+    animation_steps = []
+    for i in range(steps):
+        new_strands = []
+        for strand in strands:
+            # stop if animation has more steps then strand
+            if i >= len(strand.z):
+                break
+            threshold = cut_threshold - i * slice_height
+            new_strand = deepcopy(strand)
+            indexes = np.argwhere(strand.z < threshold)
+            new_strand.z = np.delete(new_strand.z, indexes)
+            new_strand.x = np.delete(new_strand.x, indexes)
+            new_strand.y = np.delete(new_strand.y, indexes)
+
+            if len(new_strand.x) > 0:
+                pipe_strand = robot_pos_fn(new_strand)
+
+                new_strands.append(new_strand)
+        animation_steps.append(new_strands)
+
+    return animation_steps
+
+
+def generate_crosssec(settings, animate2d=False, animate3d=False):
+    rows = settings["myRows"]
+    cols = settings["myCols"]
 
     xi = np.linspace(0, rows * Config.spacing, rows + 1)
     yi = np.linspace(0, cols * Config.spacing, cols + 1)
@@ -80,55 +192,28 @@ def generate_crosssec(settings):
                 trace["offset"] = 0
 
     if not settings["only_x"]:
-        amp = Config.spacing * mode / 2
-        for i in range(cols + 1):
-            for j in range(rows):
+        traces += generate_trace_from_settings(settings, True)
 
-                trace = {"x": [], "y": [], "z": []}
-                traces.append(trace)
-                trace["xstart"] = (
-                    j // mode * Config.spacing * mode + Config.spacing / 2 * mode
-                )
-                trace["ystart"] = i * Config.spacing
-                trace["ampx"] = amp
-                trace["ampy"] = 0
-                trace["period"] = Config.period / modeinv[mode]
-                trace["offset"] = (
-                    trace["period"] / 2 * (j % 2)
-                    if modeinv[mode] > 1
-                    else j / rows * Config.period
-                )
-                if settings["parallel"]:
-                    trace["offset"] = 0
-
-    amp = Config.spacing * mode / 2
-    for j in range(rows + 1):
-        for i in range(cols):
-
-            trace = {"x": [], "y": [], "z": []}
-            traces.append(trace)
-
-            trace["ystart"] = (
-                i // mode * Config.spacing * mode + Config.spacing / 2 * mode
-            )
-
-            trace["xstart"] = j * Config.spacing
-            trace["ampy"] = amp
-            trace["ampx"] = 0
-            trace["period"] = Config.period / modeinv[mode]
-            trace["offset"] = (
-                trace["period"] / 2 * (i % 2)
-                if modeinv[mode] > 1
-                else i / cols * Config.period
-            )
-            if settings["parallel"]:
-                trace["offset"] = 0
+    traces += generate_trace_from_settings(settings, False)
 
     for trace in traces:
         if settings["angled"]:
             sineAroundCircle(trace)
         else:
             generate_trace_points(trace)
+    strands = list_to_strand(traces)
+
+    if animate2d:
+        visualize.plot_animated_strands(strands, False)
+
+    if animate3d:
+        utils.interpolate_strands(strands, kind="cubic", step_size=1)
+
+        animated_strands_3d = visualize.calc_3d_robot_plane(
+            strands, robot_pos_fn=compute_pipegear_position, steps=6, slice_height=0.05
+        )
+
+        visualize.plot_3d_animated_strands(animated_strands_3d, save=False)
 
     return traces
 
@@ -155,22 +240,12 @@ def points_list_from_strand_xyz(trace):
     return points
 
 
-def write_obj_file(traces, path: str = "generater_output.obj"):
-    def pt_to_str(pts):
-        return [str((round(pt, 5))) for pt in pts]
-
-    with open(path, "w") as ofile:
-        vertex_count = 1
-        for trace in traces:
-            strand_points = points_list_from_strand_xyz(trace)
-            for point in strand_points:
-                line = "v " + " ".join(pt_to_str(point)) + "\n"
-                ofile.write(line)
-            indices = [
-                str(i) for i in range(vertex_count, len(strand_points) + vertex_count)
-            ]
-            vertex_count += len(strand_points)
-            indices = "l " + " ".join(indices) + "\n"
-            ofile.write(indices)
-
-    print("wrote obj file to ", path)
+def list_to_strand(traces):
+    res = []
+    for trace in traces:
+        strand = util_classes.Strand(0)
+        strand.x = trace["x"]
+        strand.y = trace["y"]
+        strand.z = trace["z"]
+        res.append(strand)
+    return res
